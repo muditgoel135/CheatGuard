@@ -66,6 +66,10 @@ def print_result(result: FaceDetectorResult, output_image: mp.Image, timestamp_m
     # print(
     #     f"Face detection result at {timestamp_ms} ms: {result.detections[0].categories[0].score if result.detections else 'No faces detected.'}"
     # )
+    if not result.detections:
+        face_detected = False
+        return
+    
     if result.detections[0].categories[0].score > 0.5:
         face_detected = True
     else:
@@ -210,7 +214,7 @@ while True:
         t2 = datetime.datetime.now()
 
         # Check if 3 seconds have passed
-        if t2 - t1 >= 3:
+        if t2 - t1 >= datetime.timedelta(seconds=3):
             # Alert the user and save the frame
             print("No face detected for 3 seconds.")
             cv2.imwrite(f"alerts/no_face_detected/{t2.timestamp()}.png", frame)
