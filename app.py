@@ -3,6 +3,7 @@ from flask import Flask, render_template
 from flask_sqlalchemy import SQLAlchemy
 import sys
 import cv2
+import datetime
 import numpy as np
 import mediapipe as mp
 from mediapipe.tasks.python import vision
@@ -201,6 +202,19 @@ while True:
             landmarker.detect_async(
                 mp_image, int(cv2.getTickCount() / cv2.getTickFrequency() * 1000)
             )
+    else:
+        # Handle no face detected scenario
+        # Implement a timer to check if no face is detected for 3 seconds
+        if not "t1" in globals():
+            t1 = datetime.datetime.now()
+        t2 = datetime.datetime.now()
+
+        # Check if 3 seconds have passed
+        if t2 - t1 >= 3:
+            # Alert the user and save the frame
+            print("No face detected for 3 seconds.")
+            cv2.imwrite(f"alerts/no_face_detected/{t2.timestamp()}.png", frame)
+            t1 = t2
 
     # Show the frame
     cv2.imshow("Webcam", frame)
