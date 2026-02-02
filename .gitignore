@@ -19,4 +19,3 @@ migrations/
 *.pkl
 *.h5
 *.ckpt
-alerts/

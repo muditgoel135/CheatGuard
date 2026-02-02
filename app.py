@@ -23,8 +23,24 @@ app.config["SECRET_KEY"] = (
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///site.db"
 db = SQLAlchemy(app)
 
+
+# Database model for alerts
+class Alert(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.DateTime, nullable=False, default=datetime.datetime.now())
+    alert_type = db.Column(db.String(100), nullable=False)
+    alert_image = db.Column(db.LargeBinary, nullable=False)
+
+    def __repr__(self):
+        return f"Alert('{self.timestamp}', '{self.alert_type}')"
+
+
+with app.app_context():
+    db.create_all()
+
 # Initialize camera
 cam0 = cv2.VideoCapture(0)
+
 
 # Mediapipe setup
 mp.tasks = mp.tasks
@@ -48,7 +64,6 @@ path_to_landmark_model = "detection_models/face_landmarker.task"
 face_detected = False
 
 
-# Create a face detector instance with the live stream mode:
 def print_result(result: FaceDetectorResult, output_image: mp.Image, timestamp_ms: int):
     """
     Callback function to print the detection result.
@@ -66,14 +81,42 @@ def print_result(result: FaceDetectorResult, output_image: mp.Image, timestamp_m
     # print(
     #     f"Face detection result at {timestamp_ms} ms: {result.detections[0].categories[0].score if result.detections else 'No faces detected.'}"
     # )
+
+    # Determine if a face is detected based on the score
     if not result.detections:
         face_detected = False
         return
-    
+
+    # Check if the detection score is above a certain threshold
     if result.detections[0].categories[0].score > 0.5:
         face_detected = True
     else:
         face_detected = False
+
+
+def alert(alert_type: str, frame: np.ndarray):
+    """
+    Saves an alert to the database.
+
+    :param alert_type: Description
+    :param frame: Description
+    """
+
+    print(f"ALERT: {alert_type} at {datetime.datetime.now()}")
+
+    # Convert frame to bytes
+    _, buffer = cv2.imencode(".png", frame)
+    alert_image = buffer.tobytes()
+
+    # Create new alert and save to database
+    new_alert = Alert(
+        alert_type=alert_type,
+        alert_image=alert_image,
+        timestamp=datetime.datetime.now(),
+    )
+    with app.app_context():
+        db.session.add(new_alert)
+        db.session.commit()
 
 
 def draw_landmarks_on_image(rgb_image, detection_result):
@@ -159,6 +202,7 @@ detector_options = FaceDetectorOptions(
     result_callback=print_result,
 )
 
+
 # Use OpenCV’s VideoCapture to start capturing from the webcam.
 while not cam0.isOpened():
     cam0 = cv2.VideoCapture(0)
@@ -170,6 +214,7 @@ print("Camera is ready")
 while True:
     # Read frame from camera
     ret, frame = cam0.read()
+
     # If frame not grabbed, break the loop
     if not ret:
         print("Failed to grab frame")
@@ -206,6 +251,7 @@ while True:
             landmarker.detect_async(
                 mp_image, int(cv2.getTickCount() / cv2.getTickFrequency() * 1000)
             )
+
     else:
         # Handle no face detected scenario
         # Implement a timer to check if no face is detected for 3 seconds
@@ -216,8 +262,8 @@ while True:
         # Check if 3 seconds have passed
         if t2 - t1 >= datetime.timedelta(seconds=3):
             # Alert the user and save the frame
-            print("No face detected for 3 seconds.")
-            cv2.imwrite(f"alerts/no_face_detected/{t2.timestamp()}.png", frame)
+            alert_type = "No Face Detected"
+            alert(alert_type, frame)
             t1 = t2
 
     # Show the frame
