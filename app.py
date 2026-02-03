@@ -1,4 +1,5 @@
 # Import necessary libraries
+import base64
 from flask import Flask, render_template
 from flask_sqlalchemy import SQLAlchemy
 import sys
@@ -232,6 +233,7 @@ def generate_frames(cam_no):
                     alert_type = "No Face Detected"
                     alert(alert_type, frame)
                     t1_by_cam[cam_key] = t2
+
             # Show the frame
             yield (
                 b"--frame\r\n"
@@ -246,8 +248,8 @@ def generate_frames(cam_no):
 def index():
     output = ""
     for i in range(find_cameras()):
-        output += f"<h2>Camera {i+1}</h2><img src='/video_feed/{i}'><p>{Alert.query.filter_by(cam_no=i).all()}</p><hr>"
-    return output + "<a href='/clear_alerts'>Clear All Alerts</a>"
+        output += f"<h2>Camera {i+1}</h2><img src='/video_feed/{i}' width='100%'><p>{Alert.query.filter_by(cam_no=i).count()} alerts</p><hr>"
+    return render_template("index.html", content=output, alerts=Alert.query.all())
 
 
 @app.route("/video_feed/<path:cam_no>")
@@ -266,6 +268,24 @@ def clear_alerts():
         num_rows_deleted = db.session.query(Alert).delete()
         db.session.commit()
     return f"Cleared {num_rows_deleted} alerts! <a href='/'>Go Back</a>"
+
+
+@app.route("/alerts")
+def alerts():
+    alerts = Alert.query.order_by(Alert.timestamp.desc()).all()
+    for alert in alerts:
+        alert.alert_image = base64.b64encode(alert.alert_image).decode("utf-8")
+    return render_template("alerts.html", alerts=alerts)
+
+
+@app.route("/delete_alert/<int:alert_id>")
+def delete_alert(alert_id):
+    with app.app_context():
+        alert = Alert.query.get(alert_id)
+        if alert:
+            db.session.delete(alert)
+            db.session.commit()
+    return f"Deleted alert with id {alert_id}! <a href='/alerts'>View Alerts</a>"
 
 
 if __name__ == "__main__":
