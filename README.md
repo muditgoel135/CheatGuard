@@ -50,7 +50,7 @@ CheatGuard is a lightweight Python-based exam proctoring system designed for off
 * Transparent logic → Rule-based, not black-box AI
 * Academic-focused → Built for real exam environments
 ## Current Limitations
-* One camera per student required
+* Multi-camera support is not tested
 * FPS depends on webcam + system performance
 * Not intended to replace human invigilators (yet 👀)
 ## Future Improvements
