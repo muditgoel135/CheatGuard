@@ -6,10 +6,10 @@ CheatGuard is a lightweight Python-based exam proctoring system designed for off
 ## Features
 * Live video monitoring via webcam
 * Face detection to ensure student presence
-* Hand detection to detect possible cheating gestures
-* Head/face orientation checks (looking down / away)
+<!-- * Hand detection to detect possible cheating gestures
+* Head/face orientation checks (looking down / away) -->
 * Automatic evidence capture when suspicious activity is detected
-* Logs alerts to a text file with timestamps
+* Logs alerts to a Flask-SQLAlchemy database with timestamps and photographical evidence
 * Built fully using classical CV + MediaPipe (no ML training required)
 ## Tech Stack
 * Python 3
@@ -17,7 +17,7 @@ CheatGuard is a lightweight Python-based exam proctoring system designed for off
 * MediaPipe
 * NumPy
 # How to install
-1. Ensure that Python 3.12 is installed from python.org. 
+1. Ensure that [Python 3.12](https://www.python.org/downloads/release/python-31210/) is installed. 
 2. Clone the repository with:
    ```
    git clone https://github.com/muditgoel135/CheatGuard.git
@@ -38,25 +38,27 @@ CheatGuard is a lightweight Python-based exam proctoring system designed for off
 2. MediaPipe processes each frame in real-time
 3. CheatGuard checks for:
 	* Face presence
-	* Hand visibility
-	* Suspicious head orientation
+	<!-- * Hand visibility
+	* Suspicious head orientation -->
 4. If a rule is violated
 	1. An alert is logged.
 	 2. It is reported to the invigilator.
 	 3. A frame is saved as evidence
 # Design Goals
-* Affordable → Works with cheap webcams
-* Offline-first → Designed for schools without online infra
-* Transparent logic → Rule-based, not black-box AI
-* Academic-focused → Built for real exam environments
+1. Teacher-centric → Final desicions are made by the invigilator
+2. Academic-focused → Built for real exam environments
+3. Transparent logic → Rule-based detection ensures alerts are interpretable, not black-box
+4. Affordable → Works with cheap webcams to support budget-constrained schools
+5. Offline-first → Designed for schools without online infrastructure
 ## Current Limitations
 * Multi-camera support is not tested
 * FPS depends on webcam + system performance
 * Not intended to replace human invigilators (yet 👀)
 ## Future Improvements
+* Hand raise detection
 * Multi-camera classroom support
 * Student ID verification
-* Better gaze estimation
+* Gaze estimation
 * GUI for invigilators
 * Performance optimizations for low-end systems
 # Contributing

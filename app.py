@@ -26,6 +26,10 @@ db = SQLAlchemy(app)
 
 # Database model for alerts
 class Alert(db.Model):
+    """
+    Database model for storing alerts generated.
+    """
+
     id = db.Column(db.Integer, primary_key=True)
     timestamp = db.Column(db.DateTime, nullable=False, default=datetime.datetime.now())
     cam_no = db.Column(db.String(100), nullable=False, default=0)
@@ -36,6 +40,7 @@ class Alert(db.Model):
         return f"Alert('{self.cam_no}, {self.timestamp}', '{self.alert_type}')"
 
 
+# Create the database tables
 with app.app_context():
     db.create_all()
 
@@ -45,6 +50,7 @@ def find_cameras():
     """
     Finds the number of connected cameras.
     """
+
     index = 0
     while True:
         cap = cv2.VideoCapture(index)
@@ -73,10 +79,12 @@ FaceLandmarkerResult = mp.tasks.vision.FaceLandmarkerResult
 # Paths to the models
 path_to_detection_model = "detection_models/face_detection_short_range.tflite"
 path_to_landmark_model = "detection_models/face_landmarker.task"
+
 # Track no-face timers per camera source (int index or URL/path).
 t1_by_cam = {}
 
 
+# Function to generate video frames and process them for face detection and landmarking
 def generate_frames(cam_no):
     """
     Generates video frames from the specified camera and processes them for face detection and landmarking.
@@ -109,6 +117,8 @@ def generate_frames(cam_no):
             cam_no=cam_no,
             timestamp=datetime.datetime.now(),
         )
+
+        # Use app context to ensure the database session is available
         with app.app_context():
             db.session.add(new_alert)
             db.session.commit()
@@ -179,12 +189,14 @@ def generate_frames(cam_no):
         num_faces=1,
     )
 
+    # Initialize video capture
     cam = cv2.VideoCapture(cam_no)
     while not cam.isOpened():
         cam = cv2.VideoCapture(0)
         cv2.waitKey(1000)
     print("Camera is ready")
 
+    # Use Face Detector and Face Landmarker
     with FaceDetector.create_from_options(
         detector_options
     ) as detector, FaceLandmarker.create_from_options(landmark_options) as landmarker:
@@ -214,14 +226,15 @@ def generate_frames(cam_no):
             else:
                 face_detected = False
 
+            # Perform face landmarking if a face is detected
             if face_detected:
                 # Detect face landmarks and draw them on the current frame.
                 landmark_result = landmarker.detect(mp_image)
                 annotated_image = draw_landmarks_on_image(rgb_frame, landmark_result)
                 frame = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
 
+            # Handle no face detected scenario
             else:
-                # Handle no face detected scenario
                 # Implement a timer to check if no face is detected for 3 seconds
                 if cam_key not in t1_by_cam:
                     t1_by_cam[cam_key] = datetime.datetime.now()
@@ -246,6 +259,10 @@ def generate_frames(cam_no):
 # Flask routes
 @app.route("/")
 def index():
+    """
+    Renders the main page with video feeds and alert counts for each camera.
+    """
+
     output = ""
     for i in range(find_cameras()):
         output += f"<h2>Camera {i+1}</h2><img src='/video_feed/{i}' width='100%'><p>{Alert.query.filter_by(cam_no=i).count()} alerts</p><hr>"
@@ -254,6 +271,12 @@ def index():
 
 @app.route("/video_feed/<path:cam_no>")
 def video_feed(cam_no):
+    """
+    Route to serve the video feed for a specific camera.
+
+    :param cam_no: The camera number or path to the video feed.
+    """
+
     # Allow numeric device indices or full URL/device paths.
     if cam_no.isdigit():
         cam_no = int(cam_no)
@@ -264,6 +287,10 @@ def video_feed(cam_no):
 
 @app.route("/clear_alerts")
 def clear_alerts():
+    """
+    Clears all alerts from the database.
+    """
+
     with app.app_context():
         num_rows_deleted = db.session.query(Alert).delete()
         db.session.commit()
@@ -272,6 +299,10 @@ def clear_alerts():
 
 @app.route("/alerts")
 def alerts():
+    """
+    Renders the alerts page showing all alerts in descending order of timestamp.
+    """
+
     alerts = Alert.query.order_by(Alert.timestamp.desc()).all()
     for alert in alerts:
         alert.alert_image = base64.b64encode(alert.alert_image).decode("utf-8")
@@ -280,6 +311,12 @@ def alerts():
 
 @app.route("/delete_alert/<int:alert_id>")
 def delete_alert(alert_id):
+    """
+    Deletes a specific alert from the database.
+
+    :param alert_id: The ID of the alert to be deleted.
+    """
+
     with app.app_context():
         alert = Alert.query.get(alert_id)
         if alert:
@@ -288,5 +325,6 @@ def delete_alert(alert_id):
     return f"Deleted alert with id {alert_id}! <a href='/alerts'>View Alerts</a>"
 
 
+# Run the Flask app
 if __name__ == "__main__":
     app.run(port=8080)
