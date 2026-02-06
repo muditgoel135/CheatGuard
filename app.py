@@ -9,15 +9,12 @@ import numpy as np
 import mediapipe as mp
 from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.vision import drawing_styles, drawing_utils
+import os
 
 
 # Initialize Flask app
 app = Flask(__name__)
-app.config["SECRET_KEY"] = (
-    sys.argv[1]
-    if len(sys.argv) > 1
-    else exit("Please provide a secret key as a command line argument.")
-)
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY")
 
 # Configure database
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///site.db"
@@ -31,7 +28,7 @@ class Alert(db.Model):
     """
 
     id = db.Column(db.Integer, primary_key=True)
-    timestamp = db.Column(db.DateTime, nullable=False, default=datetime.datetime.now())
+    timestamp = db.Column(db.DateTime, nullable=False)
     cam_no = db.Column(db.String(100), nullable=False, default=0)
     alert_type = db.Column(db.String(100), nullable=False)
     alert_image = db.Column(db.LargeBinary, nullable=False)
@@ -62,8 +59,6 @@ def find_cameras():
 
 
 # Mediapipe setup
-mp.tasks = mp.tasks
-mp.tasks.vision = mp.tasks.vision
 BaseOptions = mp.tasks.BaseOptions
 
 # Define Face Detector and Face Landmarker
@@ -76,12 +71,38 @@ FaceLandmarker = mp.tasks.vision.FaceLandmarker
 FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
 FaceLandmarkerResult = mp.tasks.vision.FaceLandmarkerResult
 
+# Define Hand detector
+HandLandmarker = mp.tasks.vision.HandLandmarker
+HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
+HandLandmarkerResult = mp.tasks.vision.HandLandmarkerResult
+
 # Paths to the models
-path_to_detection_model = "detection_models/face_detection_short_range.tflite"
+path_to_face_detection_model = "detection_models/face_detection_short_range.tflite"
 path_to_landmark_model = "detection_models/face_landmarker.task"
+path_to_hand_landmark_model = "detection_models/hand_landmarker.task"
+
+
+# Detection and landmarking options with model paths
+face_detector_options = FaceDetectorOptions(
+    base_options=BaseOptions(model_asset_path=path_to_face_detection_model),
+    running_mode=VisionRunningMode.IMAGE,
+)
+
+face_landmark_options = FaceLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path=path_to_landmark_model),
+    running_mode=VisionRunningMode.IMAGE,
+    num_faces=1,
+)
+
+hand_landmark_options = HandLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path=path_to_hand_landmark_model),
+    running_mode=VisionRunningMode.IMAGE,
+    num_hands=2,
+)
 
 # Track no-face timers per camera source (int index or URL/path).
 t1_by_cam = {}
+t1_hand_by_cam = {}
 
 
 # Function to generate video frames and process them for face detection and landmarking
@@ -123,7 +144,7 @@ def generate_frames(cam_no):
             db.session.add(new_alert)
             db.session.commit()
 
-    def draw_landmarks_on_image(
+    def draw_face_landmarks_on_image(
         rgb_image: np.ndarray, detection_result: FaceLandmarkerResult
     ):
         """
@@ -178,28 +199,54 @@ def generate_frames(cam_no):
 
         return annotated_image
 
-    # Set up Face Detector and Landmark options
-    detector_options = FaceDetectorOptions(
-        base_options=BaseOptions(model_asset_path=path_to_detection_model),
-        running_mode=VisionRunningMode.IMAGE,
-    )
-    landmark_options = FaceLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=path_to_landmark_model),
-        running_mode=VisionRunningMode.IMAGE,
-        num_faces=1,
-    )
+    def draw_hand_landmarks_on_image(
+        rgb_image: np.ndarray, detection_result: HandLandmarkerResult
+    ):
+        """
+        Draws the hand landmarks on the image.
+
+        :param rgb_image: Description
+        :param detection_result: Description
+        """
+
+        hand_landmarks_list = detection_result.hand_landmarks
+        annotated_image = np.copy(rgb_image)
+
+        # Loop through the detected hands to visualize.
+        for idx in range(len(hand_landmarks_list)):
+            hand_landmarks = hand_landmarks_list[idx]
+
+            # Draw the hand landmarks on the image.
+            drawing_utils.draw_landmarks(
+                image=annotated_image,
+                landmark_list=hand_landmarks,
+                # connections=vision.HandLandmarksConnections.HAND_LANDMARKS,
+                landmark_drawing_spec=drawing_styles.get_default_hand_landmarks_style(),
+                connection_drawing_spec=drawing_styles.get_default_hand_connections_style(),
+            )
+
+        return annotated_image
 
     # Initialize video capture
     cam = cv2.VideoCapture(cam_no)
+    attempts = 0
     while not cam.isOpened():
+        attempts += 1
+        if attempts > 5:
+            print(f"Failed to open camera {cam_no} after 5 attempts. Exiting.")
+            sys.exit(1)
         cam = cv2.VideoCapture(0)
         cv2.waitKey(1000)
     print("Camera is ready")
 
     # Use Face Detector and Face Landmarker
     with FaceDetector.create_from_options(
-        detector_options
-    ) as detector, FaceLandmarker.create_from_options(landmark_options) as landmarker:
+        face_detector_options
+    ) as face_detector, FaceLandmarker.create_from_options(
+        face_landmark_options
+    ) as face_landmarker, HandLandmarker.create_from_options(
+        hand_landmark_options
+    ) as hand_landmarker:
         # Main loop to process video frames
         while True:
             # Read frame from camera
@@ -218,19 +265,22 @@ def generate_frames(cam_no):
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
             # Perform face detection (synchronous)
-            detection_result = detector.detect(mp_image)
-            if not detection_result.detections:
+            face_detection_result = face_detector.detect(mp_image)
+            if not face_detection_result.detections:
                 face_detected = False
-            elif detection_result.detections[0].categories[0].score > 0.5:
+            elif face_detection_result.detections[0].categories[0].score > 0.5:
                 face_detected = True
             else:
                 face_detected = False
 
             # Perform face landmarking if a face is detected
             if face_detected:
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 # Detect face landmarks and draw them on the current frame.
-                landmark_result = landmarker.detect(mp_image)
-                annotated_image = draw_landmarks_on_image(rgb_frame, landmark_result)
+                landmark_result = face_landmarker.detect(mp_image)
+                annotated_image = draw_face_landmarks_on_image(
+                    rgb_frame, landmark_result
+                )
                 frame = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
 
             # Handle no face detected scenario
@@ -246,6 +296,28 @@ def generate_frames(cam_no):
                     alert_type = "No Face Detected"
                     alert(alert_type, frame)
                     t1_by_cam[cam_key] = t2
+
+            # Perform hand landmarking to check for raised hand
+            hand_landmark_result = hand_landmarker.detect(mp_image)
+            if hand_landmark_result.hand_landmarks:
+                # If hand landmarks are detected, draw them on the frame
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                annotated_image = draw_hand_landmarks_on_image(
+                    rgb_frame, hand_landmark_result
+                )
+                frame = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
+
+                # Implement a timer to check if no face is detected for 3 seconds
+                if cam_key not in t1_hand_by_cam:
+                    t1_hand_by_cam[cam_key] = datetime.datetime.now()
+                t2 = datetime.datetime.now()
+
+                # Check if 3 seconds have passed
+                if t2 - t1_hand_by_cam[cam_key] >= datetime.timedelta(seconds=3):
+                    # Alert the user and save the frame
+                    alert_type = "Hand Raised"
+                    alert(alert_type, frame)
+                    t1_hand_by_cam[cam_key] = t2
 
             # Show the frame
             yield (
