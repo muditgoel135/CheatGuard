@@ -120,7 +120,8 @@ def generate_frames(cam_no):
     :type cam_no: int
     """
 
-    global t1_by_cam
+    global t1_by_cam, t1_hand_by_cam, cam_fps
+    start = datetime.datetime.now()
     cam_key = cam_no
 
     def alert(alert_type: str, frame: np.ndarray):
@@ -305,9 +306,10 @@ def generate_frames(cam_no):
 
             # Perform hand landmarking to check for raised hand
             hand_landmark_result = hand_landmarker.detect(mp_image)
+            # print(hand_landmark_result)
             if hand_landmark_result.hand_landmarks and (
-                hand_landmark_result.hand_landmarks[0].handedness[0].score > 0.5
-                or hand_landmark_result.hand_landmarks[0].handedness[1].score > 0.5
+                hand_landmark_result.handedness[0][0].score > 0.5
+                or hand_landmark_result.handedness[1][0].score > 0.5
             ):
                 # If hand landmarks are detected, draw them on the frame
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -328,6 +330,19 @@ def generate_frames(cam_no):
                     alert(alert_type, frame)
                     t1_hand_by_cam[cam_key] = t2
 
+            time_diff = (datetime.datetime.now() - start).total_seconds()
+            cv2.putText(
+                frame,
+                f"FPS: {1/time_diff:.2f}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 255, 0),
+                2,
+                cv2.LINE_AA,
+            )
+            start = datetime.datetime.now()
+
             # Show the frame
             yield (
                 b"--frame\r\n"
@@ -346,7 +361,11 @@ def index():
 
     output = ""
     for i in range(find_cameras()):
-        output += f"<h2>Camera {i+1}</h2><img src='/video_feed/{i}' width='100%'><p>{Alert.query.filter_by(cam_no=i).count()} alerts</p><hr>"
+        output += f"""
+            <h2>Camera {i+1}</h2>
+            <img src='/video_feed/{i}' width='100%'>
+            <p>{Alert.query.filter_by(cam_no=i).count()} alerts</p><hr>
+        """
     return render_template("index.html", content=output, alerts=Alert.query.all())
 
 
@@ -408,4 +427,4 @@ def delete_alert(alert_id):
 
 # Run the Flask app
 if __name__ == "__main__":
-    app.run(port=8080)
+    app.run(port=8080, debug=True)
