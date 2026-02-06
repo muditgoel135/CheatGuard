@@ -2,7 +2,6 @@
 import base64
 from flask import Flask, render_template
 from flask_sqlalchemy import SQLAlchemy
-import sys
 import cv2
 import datetime
 import numpy as np
@@ -77,9 +76,16 @@ HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
 HandLandmarkerResult = mp.tasks.vision.HandLandmarkerResult
 
 # Paths to the models
-path_to_face_detection_model = "detection_models/face_detection_short_range.tflite"
-path_to_landmark_model = "detection_models/face_landmarker.task"
-path_to_hand_landmark_model = "detection_models/hand_landmarker.task"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+path_to_face_detection_model = os.path.join(
+    BASE_DIR, "detection_models", "face_detection_short_range.tflite"
+)
+path_to_landmark_model = os.path.join(
+    BASE_DIR, "detection_models", "face_landmarker.task"
+)
+path_to_hand_landmark_model = os.path.join(
+    BASE_DIR, "detection_models", "hand_landmarker.task"
+)
 
 
 # Detection and landmarking options with model paths
@@ -234,7 +240,7 @@ def generate_frames(cam_no):
         attempts += 1
         if attempts > 5:
             print(f"Failed to open camera {cam_no} after 5 attempts. Exiting.")
-            sys.exit(1)
+            return "Failed to open camera."
         cam = cv2.VideoCapture(0)
         cv2.waitKey(1000)
     print("Camera is ready")
@@ -299,7 +305,10 @@ def generate_frames(cam_no):
 
             # Perform hand landmarking to check for raised hand
             hand_landmark_result = hand_landmarker.detect(mp_image)
-            if hand_landmark_result.hand_landmarks:
+            if hand_landmark_result.hand_landmarks and (
+                hand_landmark_result.hand_landmarks[0].handedness[0].score > 0.5
+                or hand_landmark_result.hand_landmarks[0].handedness[1].score > 0.5
+            ):
                 # If hand landmarks are detected, draw them on the frame
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 annotated_image = draw_hand_landmarks_on_image(
