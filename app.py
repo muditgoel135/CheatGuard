@@ -109,10 +109,12 @@ hand_landmark_options = HandLandmarkerOptions(
 # Track no-face timers per camera source (int index or URL/path).
 t1_by_cam = {}
 t1_hand_by_cam = {}
+state_by_cam = {}
+evidence_queue_by_cam = {}  # Optional: To store recent frames for evidence if needed.
 
 
 # Function to generate video frames and process them for face detection and landmarking
-def generate_frames(cam_no):
+def generate_frames(cam_key):
     """
     Generates video frames from the specified camera and processes them for face detection and landmarking.
 
@@ -120,9 +122,9 @@ def generate_frames(cam_no):
     :type cam_no: int
     """
 
-    global t1_by_cam, t1_hand_by_cam, cam_fps
+    global t1_by_cam, t1_hand_by_cam, state_by_cam
     start = datetime.datetime.now()
-    cam_key = cam_no
+    state_by_cam[cam_key] = "IDLE"
 
     def alert(alert_type: str, frame: np.ndarray):
         """
@@ -142,7 +144,7 @@ def generate_frames(cam_no):
         new_alert = Alert(
             alert_type=alert_type,
             alert_image=alert_image,
-            cam_no=cam_no,
+            cam_no=str(cam_key),
             timestamp=datetime.datetime.now(),
         )
 
@@ -235,12 +237,12 @@ def generate_frames(cam_no):
         return annotated_image
 
     # Initialize video capture
-    cam = cv2.VideoCapture(cam_no)
+    cam = cv2.VideoCapture(cam_key)
     attempts = 0
     while not cam.isOpened():
         attempts += 1
         if attempts > 5:
-            print(f"Failed to open camera {cam_no} after 5 attempts. Exiting.")
+            print(f"Failed to open camera {cam_key} after 5 attempts. Exiting.")
             return "Failed to open camera."
         cam = cv2.VideoCapture(0)
         cv2.waitKey(1000)
@@ -289,6 +291,10 @@ def generate_frames(cam_no):
                     rgb_frame, landmark_result
                 )
                 frame = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
+                # Face is back, so reset the no-face timer/state for this camera.
+                t1_by_cam.pop(cam_key, None)
+                if state_by_cam.get(cam_key) == "No Face Detected":
+                    state_by_cam[cam_key] = "IDLE"
 
             # Handle no face detected scenario
             else:
@@ -298,18 +304,20 @@ def generate_frames(cam_no):
                 t2 = datetime.datetime.now()
 
                 # Check if 3 seconds have passed
-                if t2 - t1_by_cam[cam_key] >= datetime.timedelta(seconds=3):
+                if (
+                    t2 - t1_by_cam[cam_key] >= datetime.timedelta(seconds=3)
+                    and state_by_cam.get(cam_key) != "No Face Detected"
+                ):
                     # Alert the user and save the frame
                     alert_type = "No Face Detected"
                     alert(alert_type, frame)
+                    state_by_cam[cam_key] = "No Face Detected"
                     t1_by_cam[cam_key] = t2
 
             # Perform hand landmarking to check for raised hand
             hand_landmark_result = hand_landmarker.detect(mp_image)
-            # print(hand_landmark_result)
             if hand_landmark_result.hand_landmarks and (
                 hand_landmark_result.handedness[0][0].score > 0.5
-                or hand_landmark_result.handedness[1][0].score > 0.5
             ):
                 # If hand landmarks are detected, draw them on the frame
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -324,11 +332,20 @@ def generate_frames(cam_no):
                 t2 = datetime.datetime.now()
 
                 # Check if 3 seconds have passed
-                if t2 - t1_hand_by_cam[cam_key] >= datetime.timedelta(seconds=3):
+                if (
+                    t2 - t1_hand_by_cam[cam_key] >= datetime.timedelta(seconds=3)
+                    and state_by_cam.get(cam_key, "") == "IDLE"
+                ):
                     # Alert the user and save the frame
                     alert_type = "Hand Raised"
                     alert(alert_type, frame)
+                    state_by_cam[cam_key] = "Hand Raised"
                     t1_hand_by_cam[cam_key] = t2
+            else:
+                # No hand currently detected; reset timer and recover state.
+                t1_hand_by_cam.pop(cam_key, None)
+                if state_by_cam.get(cam_key) == "Hand Raised" and face_detected:
+                    state_by_cam[cam_key] = "IDLE"
 
             time_diff = (datetime.datetime.now() - start).total_seconds()
             cv2.putText(
@@ -342,6 +359,18 @@ def generate_frames(cam_no):
                 cv2.LINE_AA,
             )
             start = datetime.datetime.now()
+
+            # Display the current state on the frame
+            cv2.putText(
+                frame,
+                f"State: {state_by_cam.get(cam_key, 'IDLE')}",
+                (10, 70),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 255, 0),
+                2,
+                cv2.LINE_AA,
+            )
 
             # Show the frame
             yield (
@@ -364,8 +393,11 @@ def index():
         output += f"""
             <h2>Camera {i+1}</h2>
             <img src='/video_feed/{i}' width='100%'>
-            <p>{Alert.query.filter_by(cam_no=i).count()} alerts</p><hr>
+            <p>{Alert.query.filter_by(cam_no=str(i)).count()} alerts</p>
+            <a href="/alerts/{i}" class="btn btn-primary">View Alerts</a><hr>
+            <a href="/clear_alerts/{i}" class="btn btn-danger">Clear Alerts</a><hr>
         """
+
     return render_template("index.html", content=output, alerts=Alert.query.all())
 
 
@@ -380,6 +412,8 @@ def video_feed(cam_no):
     # Allow numeric device indices or full URL/device paths.
     if cam_no.isdigit():
         cam_no = int(cam_no)
+
+    # Return the video feed as a multipart response.
     return app.response_class(
         generate_frames(cam_no), mimetype="multipart/x-mixed-replace; boundary=frame"
     )
@@ -391,10 +425,25 @@ def clear_alerts():
     Clears all alerts from the database.
     """
 
+    # Use app context to ensure the database session is available when deleting alerts.
     with app.app_context():
         num_rows_deleted = db.session.query(Alert).delete()
         db.session.commit()
     return f"Cleared {num_rows_deleted} alerts! <a href='/'>Go Back</a>"
+
+
+@app.route("/clear_alerts/<cam_no>")
+def clear_alerts_by_cam(cam_no):
+    """
+    Clears all alerts for a specific camera from the database.
+
+    :param cam_no: The camera number for which to clear alerts.
+    """
+
+    with app.app_context():
+        num_rows_deleted = Alert.query.filter_by(cam_no=str(cam_no)).delete()
+        db.session.commit()
+    return f"Cleared {num_rows_deleted} alerts for camera {cam_no}! <a href='/'>Go Back</a>"
 
 
 @app.route("/alerts")
@@ -407,6 +456,22 @@ def alerts():
     for alert in alerts:
         alert.alert_image = base64.b64encode(alert.alert_image).decode("utf-8")
     return render_template("alerts.html", alerts=alerts)
+
+
+@app.route("/alerts/<cam_no>")
+def alerts_by_cam(cam_no):
+    """
+    Renders the alerts page showing alerts for a specific camera in descending order of timestamp.
+
+    :param cam_no: The camera number for which to display alerts.
+    """
+
+    alerts = (
+        Alert.query.filter_by(cam_no=str(cam_no)).order_by(Alert.timestamp.desc()).all()
+    )
+    for alert in alerts:
+        alert.alert_image = base64.b64encode(alert.alert_image).decode("utf-8")
+    return render_template("alerts.html", alerts=alerts, cam_no=cam_no)
 
 
 @app.route("/delete_alert/<int:alert_id>")
@@ -427,4 +492,4 @@ def delete_alert(alert_id):
 
 # Run the Flask app
 if __name__ == "__main__":
-    app.run(port=8080, debug=True)
+    app.run(port=8080)

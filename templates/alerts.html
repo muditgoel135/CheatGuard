@@ -33,7 +33,11 @@
     </main>
     <section>
         <h2>Delete All Alerts</h2>
-        <a href="/delete_all_alerts" class="btn btn-danger">Delete All Alerts</a>
+        {% if cam_no is not none %}
+        <a href="/clear_alerts/{{ cam_no }}" class="btn btn-danger">Clear All Alerts</a>
+        {% else %}
+        <a href="/clear_alerts" class="btn btn-danger">Clear All Alerts</a>
+        {% endif %}
     </section>
     <hr>
     <footer>
