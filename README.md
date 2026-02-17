@@ -6,8 +6,8 @@ CheatGuard is a lightweight Python-based exam proctoring system designed for off
 ## Features
 * Live video monitoring via webcam
 * Face detection to ensure student presence
-<!-- * Hand detection to detect possible cheating gestures
-* Head/face orientation checks (looking down / away) -->
+* Hand detection for questions during the exam
+<!-- * Head/face orientation checks (looking down / away) -->
 * Automatic evidence capture when suspicious activity is detected
 * Logs alerts to a Flask-SQLAlchemy database with timestamps and photographical evidence
 * Built fully using classical CV + MediaPipe (no ML training required)
@@ -28,18 +28,21 @@ CheatGuard is a lightweight Python-based exam proctoring system designed for off
 	```
    pip install -r requirements.txt
  	```
-5. Decide on a secret key to use. 
-6. Run the app with the below command:
+5. Create a .env file with your secret key with name `SECRET_KEY`. Save it as the below text and replace "your_secret_key" with your secret key.
+   ```
+   SECRET_KEY = your_secret_key
+   ```
+7. Run the app with the below command:
 	```
-	python app.py your_secret_key
+	python app.py
 	```
 # How It Works
 1. Webcam feed is captured using OpenCV
 2. MediaPipe processes each frame in real-time
 3. CheatGuard checks for:
 	* Face presence
-	<!-- * Hand visibility
-	* Suspicious head orientation -->
+	* Hand visibility
+	<!-- * Suspicious head orientation -->
 4. If a rule is violated
 	1. An alert is logged.
 	 2. It is reported to the invigilator.
