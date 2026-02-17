@@ -6,9 +6,8 @@ import cv2
 import datetime
 import numpy as np
 import mediapipe as mp
-from mediapipe.tasks.python import vision
-from mediapipe.tasks.python.vision import drawing_styles, drawing_utils
 import os
+import landmarker
 
 
 # Initialize Flask app
@@ -110,7 +109,7 @@ hand_landmark_options = HandLandmarkerOptions(
 t1_by_cam = {}
 t1_hand_by_cam = {}
 state_by_cam = {}
-evidence_queue_by_cam = {}  # Optional: To store recent frames for evidence if needed.
+# evidence_queue_by_cam = {}  # Optional: To store recent frames for evidence if needed.
 
 
 # Function to generate video frames and process them for face detection and landmarking
@@ -153,92 +152,11 @@ def generate_frames(cam_key):
             db.session.add(new_alert)
             db.session.commit()
 
-    def draw_face_landmarks_on_image(
-        rgb_image: np.ndarray, detection_result: FaceLandmarkerResult
-    ):
-        """
-        Draws the face landmarks on the image.
-
-        :param rgb_image: Description
-        :param detection_result: Description
-        """
-
-        face_landmarks_list = detection_result.face_landmarks
-        annotated_image = np.copy(rgb_image)
-
-        # Loop through the detected faces to visualize.
-        for idx in range(len(face_landmarks_list)):
-            face_landmarks = face_landmarks_list[idx]
-
-            # Draw the face landmarks on the image.
-            # Tesselation
-            drawing_utils.draw_landmarks(
-                image=annotated_image,
-                landmark_list=face_landmarks,
-                connections=vision.FaceLandmarksConnections.FACE_LANDMARKS_TESSELATION,
-                landmark_drawing_spec=None,
-                connection_drawing_spec=drawing_styles.get_default_face_mesh_tesselation_style(),
-            )
-
-            # Contours
-            drawing_utils.draw_landmarks(
-                image=annotated_image,
-                landmark_list=face_landmarks,
-                connections=vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS,
-                landmark_drawing_spec=None,
-                connection_drawing_spec=drawing_styles.get_default_face_mesh_contours_style(),
-            )
-
-            # Irises
-            drawing_utils.draw_landmarks(
-                image=annotated_image,
-                landmark_list=face_landmarks,
-                connections=vision.FaceLandmarksConnections.FACE_LANDMARKS_LEFT_IRIS,
-                landmark_drawing_spec=None,
-                connection_drawing_spec=drawing_styles.get_default_face_mesh_iris_connections_style(),
-            )
-
-            drawing_utils.draw_landmarks(
-                image=annotated_image,
-                landmark_list=face_landmarks,
-                connections=vision.FaceLandmarksConnections.FACE_LANDMARKS_RIGHT_IRIS,
-                landmark_drawing_spec=None,
-                connection_drawing_spec=drawing_styles.get_default_face_mesh_iris_connections_style(),
-            )
-
-        return annotated_image
-
-    def draw_hand_landmarks_on_image(
-        rgb_image: np.ndarray, detection_result: HandLandmarkerResult
-    ):
-        """
-        Draws the hand landmarks on the image.
-
-        :param rgb_image: Description
-        :param detection_result: Description
-        """
-
-        hand_landmarks_list = detection_result.hand_landmarks
-        annotated_image = np.copy(rgb_image)
-
-        # Loop through the detected hands to visualize.
-        for idx in range(len(hand_landmarks_list)):
-            hand_landmarks = hand_landmarks_list[idx]
-
-            # Draw the hand landmarks on the image.
-            drawing_utils.draw_landmarks(
-                image=annotated_image,
-                landmark_list=hand_landmarks,
-                # connections=vision.HandLandmarksConnections.HAND_LANDMARKS,
-                landmark_drawing_spec=drawing_styles.get_default_hand_landmarks_style(),
-                connection_drawing_spec=drawing_styles.get_default_hand_connections_style(),
-            )
-
-        return annotated_image
-
     # Initialize video capture
     cam = cv2.VideoCapture(cam_key)
     attempts = 0
+
+    # Wait until the camera is opened, with a maximum of 5 attempts (5 seconds).
     while not cam.isOpened():
         attempts += 1
         if attempts > 5:
@@ -285,12 +203,14 @@ def generate_frames(cam_key):
             # Perform face landmarking if a face is detected
             if face_detected:
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
                 # Detect face landmarks and draw them on the current frame.
                 landmark_result = face_landmarker.detect(mp_image)
-                annotated_image = draw_face_landmarks_on_image(
+                annotated_image = landmarker.draw_face_landmarks_on_image(
                     rgb_frame, landmark_result
                 )
                 frame = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
+
                 # Face is back, so reset the no-face timer/state for this camera.
                 t1_by_cam.pop(cam_key, None)
                 if state_by_cam.get(cam_key) == "No Face Detected":
@@ -321,7 +241,7 @@ def generate_frames(cam_key):
             ):
                 # If hand landmarks are detected, draw them on the frame
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                annotated_image = draw_hand_landmarks_on_image(
+                annotated_image = landmarker.draw_hand_landmarks_on_image(
                     rgb_frame, hand_landmark_result
                 )
                 frame = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
@@ -335,6 +255,7 @@ def generate_frames(cam_key):
                 if (
                     t2 - t1_hand_by_cam[cam_key] >= datetime.timedelta(seconds=3)
                     and state_by_cam.get(cam_key, "") == "IDLE"
+                    and face_detected
                 ):
                     # Alert the user and save the frame
                     alert_type = "Hand Raised"
@@ -347,6 +268,7 @@ def generate_frames(cam_key):
                 if state_by_cam.get(cam_key) == "Hand Raised" and face_detected:
                     state_by_cam[cam_key] = "IDLE"
 
+            # Calculate and display FPS on the frame
             time_diff = (datetime.datetime.now() - start).total_seconds()
             cv2.putText(
                 frame,
