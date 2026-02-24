@@ -25,16 +25,20 @@
         <ul>
             {% for alert in alerts %}
             {% if alert.cam_no.isdigit() %}
-            <li><strong>Camera {{ alert.cam_no|int + 1 }}</strong>: <u>{{ alert.alert_type }}</u> at {{ alert.timestamp
-                }}</li>
+            <li>
+                <strong>Camera {{ alert.cam_no|int + 1 }}</strong>:
+                <u>{{ alert.alert_type }}</u> at {{ alert.timestamp }}
+            </li>
             {% else %}
-            <li><strong>Camera path {{ alert.cam_no }}</strong>: <u>{{ alert.alert_type }}</u> at {{ alert.timestamp }}
+            <li>
+                <strong>Camera path {{ alert.cam_no }}</strong>:
+                <u>{{ alert.alert_type }}</u> at {{ alert.timestamp }}
             </li>
             {% endif %}
             {% endfor %}
         </ul>
-        <a href="/alerts" class="btn btn-primary">View all alerts</a>&nbsp;&nbsp;<a href="/clear_alerts"
-            class="btn btn-danger">Clear All Alerts</a>
+        <a href="/alerts" class="btn btn-primary">View all alerts</a>&nbsp;&nbsp;
+        <a href="/clear_alerts" class="btn btn-danger">Clear All Alerts</a>
     </section>
     <hr>
     <footer>

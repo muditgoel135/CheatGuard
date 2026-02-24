@@ -1,3 +1,4 @@
+# Import necessary libraries
 import numpy as np
 from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.vision import drawing_styles, drawing_utils

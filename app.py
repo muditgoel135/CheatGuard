@@ -268,8 +268,10 @@ def generate_frames(cam_key):
                 if state_by_cam.get(cam_key) == "Hand Raised" and face_detected:
                     state_by_cam[cam_key] = "IDLE"
 
-            # Calculate and display FPS on the frame
+            # Calculate FPS
             time_diff = (datetime.datetime.now() - start).total_seconds()
+
+            # Display the FPS on the frame
             cv2.putText(
                 frame,
                 f"FPS: {1/time_diff:.2f}",
@@ -280,7 +282,6 @@ def generate_frames(cam_key):
                 2,
                 cv2.LINE_AA,
             )
-            start = datetime.datetime.now()
 
             # Display the current state on the frame
             cv2.putText(
@@ -293,6 +294,9 @@ def generate_frames(cam_key):
                 2,
                 cv2.LINE_AA,
             )
+
+            # Reset FPS calculation time
+            start = datetime.datetime.now()
 
             # Show the frame
             yield (
