@@ -29,7 +29,7 @@
         {% endif %}
         <img src="data:image/png;base64,{{ alert.alert_image }}" width="50%"
             alt="Alert image for {{ alert.alert_type }}">&nbsp;&nbsp;
-        <form method="post" action="/delete_alert/{{ alert.id }}" style="display:inline;">
+        <form method="post" action="/delete_alert/{{ alert.id }}">
             <button type="submit" class="btn btn-danger">Delete Alert</button>
         </form>
         <hr>
@@ -48,11 +48,11 @@
     <section>
         <h2>Delete All Alerts</h2>
         {% if cam_no is not none %}
-        <form method="post" action="/clear_alerts/{{ cam_no }}" style="display:inline;">
+        <form method="post" action="/clear_alerts/{{ cam_no }}">
             <button type="submit" class="btn btn-danger">Clear All Alerts</button>
         </form>
         {% else %}
-        <form method="post" action="/clear_alerts" style="display:inline;">
+        <form method="post" action="/clear_alerts">
             <button type="submit" class="btn btn-danger">Clear All Alerts</button>
         </form>
         {% endif %}
