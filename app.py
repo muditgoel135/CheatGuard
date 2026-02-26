@@ -1,6 +1,6 @@
 # Import necessary libraries
 import base64
-from flask import Flask, render_template
+from flask import Flask, render_template, send_file, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 import cv2
 import datetime
@@ -8,6 +8,9 @@ import numpy as np
 import mediapipe as mp
 import os
 import landmarker
+from collections import deque
+from io import BytesIO
+import zipfile
 
 
 # Initialize Flask app
@@ -58,6 +61,7 @@ def find_cameras():
 
 # Mediapipe setup
 BaseOptions = mp.tasks.BaseOptions
+forucc = cv2.VideoWriter_fourcc(*"mp4v")
 
 # Define Face Detector and Face Landmarker
 FaceDetector = mp.tasks.vision.FaceDetector
@@ -79,12 +83,17 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 path_to_face_detection_model = os.path.join(
     BASE_DIR, "detection_models", "face_detection_short_range.tflite"
 )
+
 path_to_landmark_model = os.path.join(
     BASE_DIR, "detection_models", "face_landmarker.task"
 )
+
 path_to_hand_landmark_model = os.path.join(
     BASE_DIR, "detection_models", "hand_landmarker.task"
 )
+
+output_dir = os.path.join(BASE_DIR, "output")
+os.makedirs(output_dir, exist_ok=True)
 
 
 # Detection and landmarking options with model paths
@@ -109,7 +118,9 @@ hand_landmark_options = HandLandmarkerOptions(
 t1_by_cam = {}
 t1_hand_by_cam = {}
 state_by_cam = {}
-# evidence_queue_by_cam = {}  # Optional: To store recent frames for evidence if needed.
+recording_by_cam = {}
+evidence_queue_by_cam = {}  # Optional: To store recent frames for evidence if needed.
+alert_evidence_paths = []
 
 
 # Function to generate video frames and process them for face detection and landmarking
@@ -121,9 +132,18 @@ def generate_frames(cam_key):
     :type cam_no: int
     """
 
-    global t1_by_cam, t1_hand_by_cam, state_by_cam
+    # Define global variables to track state and timers for each camera.
+    global t1_by_cam, t1_hand_by_cam, state_by_cam, recording_by_cam, evidence_queue_by_cam, forucc, alert_evidence_paths
+
+    # Define the start time for FPS calculation.
     start = datetime.datetime.now()
+
+    # Initialize state and timers for this camera if not already done.
     state_by_cam[cam_key] = "IDLE"
+
+    # Initialize recording state and evidence queue for this camera.
+    recording_by_cam[cam_key] = False
+    evidence_queue_by_cam[cam_key] = deque()
 
     def alert(alert_type: str, frame: np.ndarray):
         """
@@ -152,6 +172,43 @@ def generate_frames(cam_key):
             db.session.add(new_alert)
             db.session.commit()
 
+    def stop_recording():
+        """
+        Stops recording and clears and saves the evidence queue for the camera.
+        """
+
+        if len(evidence_queue_by_cam.get(cam_key, deque())) > 0:
+            recording_by_cam[cam_key] = False
+            release_path = os.path.join(
+                output_dir,
+                f"evidence_cam{cam_key}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4",
+            )
+            height, width = evidence_queue_by_cam.get(cam_key)[0].shape[:2]
+            out = cv2.VideoWriter(
+                release_path,
+                forucc,
+                15.0,
+                (width, height),
+            )
+            if not out.isOpened():
+                print(f"Failed to open VideoWriter for {release_path}")
+                evidence_queue_by_cam[cam_key] = deque()
+                return
+
+            for frame in evidence_queue_by_cam[cam_key]:
+                out.write(frame)
+            out.release()
+            # Only expose evidence file if video writing succeeded.
+            (
+                alert_evidence_paths.append(os.path.basename(release_path))
+                if os.path.exists(release_path)
+                and os.path.getsize(release_path) > 0
+                and os.path.isfile(release_path)
+                and os.path.basename(release_path) not in alert_evidence_paths
+                else print(f"Failed to save evidence video for camera {cam_key}")
+            )
+            evidence_queue_by_cam[cam_key] = deque()
+
     # Initialize video capture
     cam = cv2.VideoCapture(cam_key)
     attempts = 0
@@ -162,7 +219,7 @@ def generate_frames(cam_key):
         if attempts > 5:
             print(f"Failed to open camera {cam_key} after 5 attempts. Exiting.")
             return "Failed to open camera."
-        cam = cv2.VideoCapture(0)
+        cam = cv2.VideoCapture(cam_key)
         cv2.waitKey(1000)
     print("Camera is ready")
 
@@ -183,6 +240,9 @@ def generate_frames(cam_key):
             if not ret:
                 print("Failed to grab frame")
                 break
+
+            if recording_by_cam.get(cam_key) == True:
+                evidence_queue_by_cam[cam_key].append(frame)
 
             # Edit the frame to make it suitable for processing
             frame = cv2.flip(frame, 1)
@@ -213,8 +273,8 @@ def generate_frames(cam_key):
 
                 # Face is back, so reset the no-face timer/state for this camera.
                 t1_by_cam.pop(cam_key, None)
-                if state_by_cam.get(cam_key) == "No Face Detected":
-                    state_by_cam[cam_key] = "IDLE"
+                state_by_cam[cam_key] = "IDLE"
+                stop_recording()
 
             # Handle no face detected scenario
             else:
@@ -222,6 +282,7 @@ def generate_frames(cam_key):
                 if cam_key not in t1_by_cam:
                     t1_by_cam[cam_key] = datetime.datetime.now()
                 t2 = datetime.datetime.now()
+                recording_by_cam[cam_key] = True
 
                 # Check if 3 seconds have passed
                 if (
@@ -345,7 +406,7 @@ def video_feed(cam_no):
     )
 
 
-@app.route("/clear_alerts")
+@app.route("/clear_alerts", methods=["POST"])
 def clear_alerts():
     """
     Clears all alerts from the database.
@@ -358,7 +419,7 @@ def clear_alerts():
     return f"Cleared {num_rows_deleted} alerts! <a href='/'>Go Back</a>"
 
 
-@app.route("/clear_alerts/<cam_no>")
+@app.route("/clear_alerts/<cam_no>", methods=["POST"])
 def clear_alerts_by_cam(cam_no):
     """
     Clears all alerts for a specific camera from the database.
@@ -381,7 +442,9 @@ def alerts():
     alerts = Alert.query.order_by(Alert.timestamp.desc()).all()
     for alert in alerts:
         alert.alert_image = base64.b64encode(alert.alert_image).decode("utf-8")
-    return render_template("alerts.html", alerts=alerts)
+    return render_template(
+        "alerts.html", alerts=alerts, alert_evidence_paths=alert_evidence_paths
+    )
 
 
 @app.route("/alerts/<cam_no>")
@@ -397,10 +460,15 @@ def alerts_by_cam(cam_no):
     )
     for alert in alerts:
         alert.alert_image = base64.b64encode(alert.alert_image).decode("utf-8")
-    return render_template("alerts.html", alerts=alerts, cam_no=cam_no)
+    return render_template(
+        "alerts.html",
+        alerts=alerts,
+        cam_no=cam_no,
+        alert_evidence_paths=alert_evidence_paths,
+    )
 
 
-@app.route("/delete_alert/<int:alert_id>")
+@app.route("/delete_alert/<int:alert_id>", methods=["POST"])
 def delete_alert(alert_id):
     """
     Deletes a specific alert from the database.
@@ -416,6 +484,43 @@ def delete_alert(alert_id):
     return f"Deleted alert with id {alert_id}! <a href='/alerts'>View Alerts</a>"
 
 
+@app.route("/download/<path:filepath>")
+def download_file(filepath):
+    """
+    Route to download an alert evidence file.
+
+    :param filepath: The path to the file to be downloaded.
+    """
+
+    return send_from_directory(output_dir, filepath, as_attachment=True)
+
+
+@app.route("/download_all_alerts")
+def download_all_alerts():
+    """
+    Route to download all alert evidence files as a zip archive.
+    """
+
+    # Create an in-memory zip file containing all evidence files in the output directory.
+    memory_file = BytesIO()
+
+    with zipfile.ZipFile(memory_file, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(output_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+
+                # keeps folder structure inside zip
+                arcname = os.path.relpath(file_path, output_dir)
+                zf.write(file_path, arcname=arcname)
+
+    memory_file.seek(0)
+    return send_file(
+        memory_file,
+        as_attachment=True,
+        download_name="all_alert_evidence.zip",
+    )
+
+
 # Run the Flask app
 if __name__ == "__main__":
-    app.run(port=8080)
+    app.run(port=8080, debug=True)

@@ -18,7 +18,9 @@
         <h1>All alerts</h1>
         <a href="/" class="btn btn-secondary">Back to Home</a><br><br>
     </header>
+
     <main>
+        <!-- For-loop to display alerts -->
         {% for alert in alerts %}
         {% if alert.cam_no.isdigit() %}
         <h3>{{ alert.alert_type }} at {{ alert.timestamp }} (Camera {{ alert.cam_no|int + 1 }})</h3>
@@ -31,6 +33,16 @@
         <hr>
         {% endfor %}
     </main>
+
+    <!-- Display evidence files -->
+    <section>
+        <h2>Alert Evidence Files</h2>
+        {% for path in alert_evidence_paths %}
+        <p><a href="{{ url_for('download_file', filepath=path) }}">{{ path[-17:-4] }}</a></p>
+        {% endfor %}
+    </section>
+
+    <!-- Route to delete all alerts -->
     <section>
         <h2>Delete All Alerts</h2>
         {% if cam_no is not none %}

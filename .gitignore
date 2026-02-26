@@ -19,3 +19,4 @@ migrations/
 *.pkl
 *.h5
 *.ckpt
+output/
