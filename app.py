@@ -346,8 +346,8 @@ def generate_frames(cam_key):
                         with state_lock:
                             state_by_cam[cam_key] = "Hand Raised"
                             t1_hand_by_cam[cam_key] = t2
+                # No hand currently detected; reset timer and recover state.
                 else:
-                    # No hand currently detected; reset timer and recover state.
                     with state_lock:
                         t1_hand_by_cam.pop(cam_key, None)
                         if state_by_cam.get(cam_key) == "Hand Raised" and face_detected:
@@ -371,6 +371,7 @@ def generate_frames(cam_key):
                 # Display the current state on the frame
                 with state_lock:
                     state_label = state_by_cam.get(cam_key, "IDLE")
+
                 cv2.putText(
                     frame,
                     f"State: {state_label}",

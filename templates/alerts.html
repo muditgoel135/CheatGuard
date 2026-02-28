@@ -44,6 +44,14 @@
         {% endfor %}
     </section>
 
+    <!-- Route to download all alerts -->
+    {% if cam_no is none %}
+    <section>
+        <h2>Download All Alert Evidence</h2>
+        <a href="/download_all_alerts" class="btn btn-primary">Download all alert evidence</a>
+    </section>
+    {% endif %}
+
     <!-- Route to delete all alerts -->
     <section>
         <h2>Delete All Alerts</h2>

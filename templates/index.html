@@ -9,6 +9,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet"
         integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
 
+    <!-- Other Options -->
     <title>CheatGuard homepage</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
@@ -17,9 +18,13 @@
     <header>
         <h1>Welcome to CheatGuard</h1>
     </header>
+
+    <!-- Display camera feed -->
     <main>
         {{ content|safe }}
     </main>
+
+    <!-- Display all alerts -->
     <section>
         <h2>All Alerts</h2>
         <ul>
@@ -37,6 +42,8 @@
             {% endif %}
             {% endfor %}
         </ul>
+
+        <!-- Other options -->
         <a href="/alerts" class="btn btn-primary">View all alerts</a>&nbsp;&nbsp;
         <a href="/download_all_alerts" class="btn btn-secondary">Download all alert evidence</a>&nbsp;&nbsp;
         <form method="post" action="/clear_alerts">
@@ -45,7 +52,7 @@
     </section>
     <hr>
     <footer>
-        <p>&copy; 2026 My Web Page</p>
+        <p>&copy; 2026 CheatGuard</p>
     </footer>
 </body>
 
