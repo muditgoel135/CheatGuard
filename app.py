@@ -1,6 +1,6 @@
 # Import necessary libraries
 import base64
-from flask import Flask, render_template, send_file, send_from_directory
+from flask import Flask, Response, render_template, send_file, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 import cv2
 import datetime
@@ -35,7 +35,13 @@ class Alert(db.Model):
     alert_type = db.Column(db.String(100), nullable=False)
     alert_image = db.Column(db.LargeBinary, nullable=False)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
+        """
+        String representation of the Alert object for debugging and display purposes.
+        :return: A string representation of the Alert object, including camera number, timestamp, and alert type.
+        :rtype: str
+        """
+
         return f"Alert('{self.cam_no}, {self.timestamp}', '{self.alert_type}')"
 
 
@@ -44,10 +50,14 @@ with app.app_context():
     db.create_all()
 
 
-# Find the no. of cameras connected
-def find_cameras():
+def find_cameras() -> int:
     """
     Finds the number of connected cameras.
+    It attempts to open video capture for sequential indices until it fails, counting the number of successful opens.
+    As soon as it encounters an index that cannot be opened, it assumes there are no more cameras and returns the count.
+
+    :return: The number of connected cameras.
+    :rtype: int
     """
 
     index = 0
@@ -61,60 +71,14 @@ def find_cameras():
     return index
 
 
-# Mediapipe setup
-BaseOptions = mp.tasks.BaseOptions
+# Videowriter setup
 forucc = cv2.VideoWriter_fourcc(*"mp4v")
 
-# Define Face Detector and Face Landmarker
-FaceDetector = mp.tasks.vision.FaceDetector
-FaceDetectorOptions = mp.tasks.vision.FaceDetectorOptions
-FaceDetectorResult = mp.tasks.vision.FaceDetectorResult
-VisionRunningMode = mp.tasks.vision.RunningMode
 
-FaceLandmarker = mp.tasks.vision.FaceLandmarker
-FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
-FaceLandmarkerResult = mp.tasks.vision.FaceLandmarkerResult
-
-# Define Hand detector
-HandLandmarker = mp.tasks.vision.HandLandmarker
-HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
-HandLandmarkerResult = mp.tasks.vision.HandLandmarkerResult
-
-# Paths to the models
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-path_to_face_detection_model = os.path.join(
-    BASE_DIR, "detection_models", "face_detection_short_range.tflite"
-)
-
-path_to_landmark_model = os.path.join(
-    BASE_DIR, "detection_models", "face_landmarker.task"
-)
-
-path_to_hand_landmark_model = os.path.join(
-    BASE_DIR, "detection_models", "hand_landmarker.task"
-)
-
-output_dir = os.path.join(BASE_DIR, "output")
+# Create output directory for evidence videos if it doesn't exist.
+output_dir = os.path.join(landmarker.BASE_DIR, "output")
 os.makedirs(output_dir, exist_ok=True)
 
-
-# Detection and landmarking options with model paths
-face_detector_options = FaceDetectorOptions(
-    base_options=BaseOptions(model_asset_path=path_to_face_detection_model),
-    running_mode=VisionRunningMode.IMAGE,
-)
-
-face_landmark_options = FaceLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path=path_to_landmark_model),
-    running_mode=VisionRunningMode.IMAGE,
-    num_faces=1,
-)
-
-hand_landmark_options = HandLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path=path_to_hand_landmark_model),
-    running_mode=VisionRunningMode.IMAGE,
-    num_hands=2,
-)
 
 # Track no-face timers per camera source (int index or URL/path).
 t1_by_cam = {}
@@ -131,11 +95,11 @@ def generate_frames(cam_key):
     """
     Generates video frames from the specified camera and processes them for face detection and landmarking.
 
-    :param cam_no: Description
-    :type cam_no: int
+    :param cam_key: The key (index or URL/path) of the camera to process.
+    :type cam_key: int or str
     """
 
-    # Define global variables to track state and timers for each camera.
+    # Define global variables
     global t1_by_cam, t1_hand_by_cam, state_by_cam, recording_by_cam, evidence_queue_by_cam, forucc, alert_evidence_paths
 
     # Define the start time for FPS calculation.
@@ -143,10 +107,10 @@ def generate_frames(cam_key):
 
     # Initialize state and timers for this camera if not already done.
     with state_lock:
+        # Reset the camera state to IDLE when the camera feed starts.
         state_by_cam[cam_key] = "IDLE"
 
-    # Initialize recording state and evidence queue for this camera.
-    with state_lock:
+        # Initialize recording state and evidence queue for this camera.
         recording_by_cam[cam_key] = False
         evidence_queue_by_cam[cam_key] = deque()
 
@@ -183,16 +147,23 @@ def generate_frames(cam_key):
         """
 
         with state_lock:
+            # Get the queued frames for this camera and clear the queue and recording state.
             queued_frames = list(evidence_queue_by_cam.get(cam_key, deque()))
+
+            # Ensure that there are queued frames to save
             if not queued_frames:
                 return
+
+            # Reset recording state and clear the evidence queue for this camera.
             recording_by_cam[cam_key] = False
             evidence_queue_by_cam[cam_key] = deque()
 
+        # Create a video file from the queued frames and save it to the output directory with a timestamped filename.
         release_path = os.path.join(
             output_dir,
             f"evidence_cam{cam_key}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4",
         )
+
         height, width = queued_frames[0].shape[:2]
         out = cv2.VideoWriter(
             release_path,
@@ -200,12 +171,17 @@ def generate_frames(cam_key):
             15.0,
             (width, height),
         )
+
+        # Check if the VideoWriter was successfully opened before attempting to write frames.
         if not out.isOpened():
             print(f"Failed to open VideoWriter for {release_path}")
             return
 
+        # Append each frame in the queued frames to the video file.
         for frame in queued_frames:
             out.write(frame)
+
+        # Release the VideoWriter to ensure the video file is properly saved and closed.
         out.release()
 
         # Only expose evidence file if video writing succeeded.
@@ -225,7 +201,7 @@ def generate_frames(cam_key):
     cam = cv2.VideoCapture(cam_key)
     attempts = 0
 
-    # Wait until the camera is opened, with a maximum of 5 attempts (5 seconds).
+    # Wait until the camera is opened, with a maximum of 5 attempts.
     while not cam.isOpened():
         attempts += 1
         if attempts > 5:
@@ -237,13 +213,21 @@ def generate_frames(cam_key):
 
     # Use Face Detector and Face Landmarker
     try:
-        with FaceDetector.create_from_options(
-            face_detector_options
-        ) as face_detector, FaceLandmarker.create_from_options(
-            face_landmark_options
-        ) as face_landmarker, HandLandmarker.create_from_options(
-            hand_landmark_options
-        ) as hand_landmarker:
+        # Use context managers to ensure proper resource management of the detectors and landmarkers.
+        with (
+            # Context manager for face detector
+            landmarker.FaceDetector.create_from_options(
+                landmarker.face_detector_options
+            ) as face_detector,
+            # Context manager for face landmarker
+            landmarker.FaceLandmarker.create_from_options(
+                landmarker.face_landmark_options
+            ) as face_landmarker,
+            # Context manager for hand landmarker
+            landmarker.HandLandmarker.create_from_options(
+                landmarker.hand_landmark_options
+            ) as hand_landmarker,
+        ):
             # Main loop to process video frames
             while True:
                 # Read frame from camera
@@ -254,6 +238,7 @@ def generate_frames(cam_key):
                     print("Failed to grab frame")
                     break
 
+                # If currently recording for this camera, append the current frame to the evidence queue for this camera.
                 with state_lock:
                     if recording_by_cam.get(cam_key) is True:
                         evidence_queue_by_cam[cam_key].append(frame)
@@ -267,15 +252,22 @@ def generate_frames(cam_key):
 
                 # Perform face detection (synchronous)
                 face_detection_result = face_detector.detect(mp_image)
+
+                # Ensure that the detection result detects a face
                 if not face_detection_result.detections:
                     face_detected = False
+
+                # Ensure that the detection result has a valid score for the detected face before proceeding with landmarking and state updates.
                 elif face_detection_result.detections[0].categories[0].score > 0.5:
                     face_detected = True
+
+                # If the detection result does not have a valid score for the detected face, treat it as no face detected.
                 else:
                     face_detected = False
 
                 # Perform face landmarking if a face is detected
                 if face_detected:
+                    # Convert the frame to RGB format for processing with MediaPipe.
                     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
                     # Detect face landmarks and draw them on the current frame.
@@ -283,6 +275,8 @@ def generate_frames(cam_key):
                     annotated_image = landmarker.draw_face_landmarks_on_image(
                         rgb_frame, landmark_result
                     )
+
+                    # Save the annotated frame and convert it back to BGR format for display and saving.
                     frame = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
 
                     # Face is back, so reset the no-face timer/state for this camera.
@@ -295,6 +289,7 @@ def generate_frames(cam_key):
                 else:
                     # Implement a timer to check if no face is detected for 3 seconds
                     with state_lock:
+                        # Ensure that the timer for exists in the global dictionary for this camera, and if not, initialize it to the current time.
                         if cam_key not in t1_by_cam:
                             t1_by_cam[cam_key] = datetime.datetime.now()
                         no_face_start = t1_by_cam[cam_key]
@@ -310,6 +305,8 @@ def generate_frames(cam_key):
                         # Alert the user and save the frame
                         alert_type = "No Face Detected"
                         alert(alert_type, frame)
+
+                        # Update the state to "No Face Detected" and reset the timer for this camera.
                         with state_lock:
                             state_by_cam[cam_key] = "No Face Detected"
                             t1_by_cam[cam_key] = t2
@@ -324,6 +321,8 @@ def generate_frames(cam_key):
                     annotated_image = landmarker.draw_hand_landmarks_on_image(
                         rgb_frame, hand_landmark_result
                     )
+
+                    # Save the annotated frame and convert it back to BGR format for display and saving.
                     frame = cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR)
 
                     # Implement a timer to check if no face is detected for 3 seconds
@@ -343,9 +342,12 @@ def generate_frames(cam_key):
                         # Alert the user and save the frame
                         alert_type = "Hand Raised"
                         alert(alert_type, frame)
+
+                        # Update the state to "Hand Raised" and reset the timer for this camera.
                         with state_lock:
                             state_by_cam[cam_key] = "Hand Raised"
                             t1_hand_by_cam[cam_key] = t2
+
                 # No hand currently detected; reset timer and recover state.
                 else:
                     with state_lock:
@@ -399,9 +401,12 @@ def generate_frames(cam_key):
 
 # Flask routes
 @app.route("/")
-def index():
+def index() -> str:
     """
     Renders the main page with video feeds and alert counts for each camera.
+
+    :return: The rendered HTML for the main page.
+    :rtype: str
     """
 
     output = ""
@@ -420,11 +425,14 @@ def index():
 
 
 @app.route("/video_feed/<path:cam_no>")
-def video_feed(cam_no):
+def video_feed(cam_no: str) -> Response:
     """
     Route to serve the video feed for a specific camera.
 
     :param cam_no: The camera number or path to the video feed.
+
+    :return: A streaming response containing the video feed.
+    :rtype: Response
     """
 
     # Allow numeric device indices or full URL/device paths.
@@ -438,9 +446,12 @@ def video_feed(cam_no):
 
 
 @app.route("/clear_alerts", methods=["POST"])
-def clear_alerts():
+def clear_alerts() -> str:
     """
     Clears all alerts from the database.
+
+    :return: A message confirming that all alerts have been cleared, with a link to go back to the main page.
+    :rtype: str
     """
 
     # Use app context to ensure the database session is available when deleting alerts.
@@ -451,27 +462,45 @@ def clear_alerts():
 
 
 @app.route("/clear_alerts/<cam_no>", methods=["POST"])
-def clear_alerts_by_cam(cam_no):
+def clear_alerts_by_cam(cam_no) -> str:
     """
     Clears all alerts for a specific camera from the database.
 
     :param cam_no: The camera number for which to clear alerts.
+
+    :return: A message confirming that alerts for the specified camera have been cleared, with a link to go back to the main page.
+    If the camera number is invalid or an error occurs during deletion, an error message is returned instead of crashing the application.
+    :rtype: str
     """
 
-    with app.app_context():
-        num_rows_deleted = Alert.query.filter_by(cam_no=str(cam_no)).delete()
-        db.session.commit()
+    try:
+        # Delete alerts for the specified camera
+        with app.app_context():
+            num_rows_deleted = Alert.query.filter_by(cam_no=str(cam_no)).delete()
+            db.session.commit()
+
+    # Handle any exceptions that may occur during the deletion process and return an error message instead of crashing the application.
+    except Exception as e:
+        return f"Error clearing alerts for camera {cam_no}: {e}"
+
+    # Send the confirmation message to the user
     return f"Cleared {num_rows_deleted} alerts for camera {cam_no}! <a href='/'>Go Back</a>"
 
 
 @app.route("/alerts")
-def alerts():
+def alerts() -> str:
     """
     Renders the alerts page showing all alerts in descending order of timestamp.
+
+    :return: The rendered HTML for the alerts page, containing all alerts and available evidence paths for download.
+    :rtype: str
     """
 
+    # Query all alerts from the database in descending order of timestamp and prepare them for display on the alerts page.
     alerts = Alert.query.order_by(Alert.timestamp.desc()).all()
     view_alerts = []
+
+    # Loop through the alerts to prepare them for display, encoding the alert images to base64 for rendering in HTML.
     for alert in alerts:
         view_alerts.append(
             {
@@ -482,25 +511,36 @@ def alerts():
                 "alert_image": base64.b64encode(alert.alert_image).decode("utf-8"),
             }
         )
+
+    # Update the evidence paths
     with state_lock:
         evidence_paths = list(alert_evidence_paths)
+
+    # Send the page to the user with all alerts and the available evidence paths for download.
     return render_template(
         "alerts.html", alerts=view_alerts, alert_evidence_paths=evidence_paths
     )
 
 
 @app.route("/alerts/<cam_no>")
-def alerts_by_cam(cam_no):
+def alerts_by_cam(cam_no: str) -> str:
     """
     Renders the alerts page showing alerts for a specific camera in descending order of timestamp.
 
     :param cam_no: The camera number for which to display alerts.
+
+    :return: The rendered HTML for the alerts page, containing alerts for the specified camera and available evidence paths for download.
+    :rtype: str
     """
 
+    # Query alerts for the specified camera from the database in descending order of timestamp and prepare them for display on the alerts page.
     alerts = (
         Alert.query.filter_by(cam_no=str(cam_no)).order_by(Alert.timestamp.desc()).all()
     )
+
     view_alerts = []
+
+    # Loop through the alerts to prepare them for display, encoding the alert images to base64 for rendering in HTML.
     for alert in alerts:
         view_alerts.append(
             {
@@ -511,8 +551,12 @@ def alerts_by_cam(cam_no):
                 "alert_image": base64.b64encode(alert.alert_image).decode("utf-8"),
             }
         )
+
+    # Update the evidence paths
     with state_lock:
         evidence_paths = list(alert_evidence_paths)
+
+    # Send the page to the user with the alerts for the specified camera and the available evidence paths for download.
     return render_template(
         "alerts.html",
         alerts=view_alerts,
@@ -522,41 +566,63 @@ def alerts_by_cam(cam_no):
 
 
 @app.route("/delete_alert/<int:alert_id>", methods=["POST"])
-def delete_alert(alert_id):
+def delete_alert(alert_id: int) -> str:
     """
     Deletes a specific alert from the database.
 
     :param alert_id: The ID of the alert to be deleted.
+
+    :return: A message confirming that the specified alert has been deleted, with a link to view the remaining alerts.
+    If the alert ID is not found or an error occurs during deletion, an error message is returned instead of crashing the application.
+    :rtype: str
     """
 
     with app.app_context():
+        # Query the alert by ID
         alert = db.session.get(Alert, alert_id)
+
+        # Ensure the alert exists before attempting to delete it to avoid errors.
         if alert:
             db.session.delete(alert)
             db.session.commit()
+
+        # If the alert was not found, return a message indicating so, instead of attempting to delete and causing an error.
+        else:
+            return (
+                f"Alert with id {alert_id} not found! <a href='/alerts'>View Alerts</a>"
+            )
+
+    # Send the user back to the alerts page with a message confirming deletion of the alert.
     return f"Deleted alert with id {alert_id}! <a href='/alerts'>View Alerts</a>"
 
 
 @app.route("/download/<path:filepath>")
-def download_file(filepath):
+def download_file(filepath: str) -> Response:
     """
     Route to download an alert evidence file.
 
     :param filepath: The path to the file to be downloaded.
+
+    :return: A response that sends the specified file for download.
+    :rtype: Response
     """
 
     return send_from_directory(output_dir, filepath, as_attachment=True)
 
 
 @app.route("/download_all_alerts")
-def download_all_alerts():
+def download_all_alerts() -> Response:
     """
     Route to download all alert evidence files as a zip archive.
+
+    :return: A response that sends an in-memory zip file containing all alert evidence files for download.
+    :rtype: Response
     """
 
     # Create an in-memory zip file containing all evidence files in the output directory.
     memory_file = BytesIO()
 
+    # Walk through the output directory and add all files to the zip archive, keeping the folder structure intact.
     with zipfile.ZipFile(memory_file, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(output_dir):
             for file in files:
@@ -566,7 +632,10 @@ def download_all_alerts():
                 arcname = os.path.relpath(file_path, output_dir)
                 zf.write(file_path, arcname=arcname)
 
+    # Reset the pointer of the in-memory file to the beginning before sending it for download.
     memory_file.seek(0)
+
+    # Send the in-memory zip file for download with an appropriate filename.
     return send_file(
         memory_file,
         as_attachment=True,
@@ -576,4 +645,4 @@ def download_all_alerts():
 
 # Run the Flask app
 if __name__ == "__main__":
-    app.run(port=8080, debug=True)
+    app.run()
